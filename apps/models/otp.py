@@ -2,15 +2,16 @@ from datetime import datetime, timedelta
 from app import db
 
 class Otp(db.Model):
-    __tablename__ = 'otps'
-    id = db.Column(db.Integer, primary_key=True)
-    mobile_number = db.Column(db.String(15), nullable=False)  # Ensuring unique phone number
-    otp = db.Column(db.String(100), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    expiration_time = db.Column(db.DateTime, default=lambda: datetime.utcnow() + timedelta(minutes=5))  # OTP expires in 5 minutes
-    failed_attempts = db.Column(db.Integer, default=0)  # Track failed attempts
-    is_verified = db.Column(db.Boolean, default=False)
-    status = db.Column(db.Boolean, default=True)
+    __tablename__ = 'OTP_TRACKING'
+    
+    ID = db.Column(db.BigInteger, primary_key=True)  # Use BigInteger for consistency with MySQL
+    MOBILE_NUMBER = db.Column(db.BigInteger, nullable=False)  # Use BigInteger for mobile number
+    SESSION_ID = db.Column(db.String(100), nullable=False)
+    CREATED_AT = db.Column(db.DateTime)  # Default to current UTC time
+    EXPIRATION_TIME = db.Column(db.DateTime)  # OTP expires in 5 minutes
+    FAILED_ATTEMPTS = db.Column(db.Integer, default=0)  # Track failed attempts
+    IS_VERIFIED = db.Column(db.Boolean, default=False)
+    STATUS = db.Column(db.Boolean, default=True)
 
     def __repr__(self):
-        return f'<OTP {self.otp} for {self.mobile_number}>'
+        return f'<OTP for {self.MOBILE_NUMBER}>'

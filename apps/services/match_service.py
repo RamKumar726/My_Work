@@ -1,58 +1,65 @@
 from config import Config
-
-from ..repositories.match_format_repository import  get_match_formats_list
+from ..repositories.match_format_repository import get_match_formats_list
 from ..repositories.category_type_repository import get_category_type_list
+from error_codes import ErrorCodes  # Import the updated error codes
 import requests
 
 status_mapping = {
     1: 'Scheduled',
-    2: 'Completed',
     3: 'Live',
-    4: 'Abandoned'
 }
 
-def fetch_matches_data(status_code, token):
-    response = requests.get(f'{Config.ENTITY_API_URL}/?token={Config.ENTITY_API_KEY}', headers={'Authorization': f'Bearer {token}'})
-    
-    if response.status_code == 200:
-        data = response.json()
-        items = data.get('response', {}).get('items', [])
-        
-        category_type_list = get_category_type_list()
-        match_formats_list = get_match_formats_list()
+def fetch_matches_data(match_status_code, token):
+    try:
+        # Validate the match status code
+        if match_status_code not in status_mapping:
+            return {"message": ErrorCodes.INVALID_MATCH_STATUS_CODE.description, "status": ErrorCodes.INVALID_MATCH_STATUS_CODE.value}
 
-        filtered_matches = [match for match in items if match.get('status') == status_code]
-        if len(filtered_matches) == 0:
-            return {'message': f"There are no {status_mapping.get(status_code, 'matches for this status code')} Matches"}, 404
+        response = requests.get(f'{Config.ENTITY_API_URL}/?token={Config.ENTITY_API_KEY}', headers={'Authorization': f'Bearer {token}'})
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get('response', {}).get('items', [])
 
-        if status_code == 1:
-            return _process_scheduled_matches(filtered_matches, category_type_list, match_formats_list)
-        elif status_code == 3:
-            return _process_live_matches(filtered_matches, category_type_list, match_formats_list)
+            category_type_list = get_category_type_list()
+            match_formats_list = get_match_formats_list()
 
-        return filtered_matches
+            # Filter matches by status code
+            filtered_matches = [match for match in items if match.get('status') == match_status_code]
 
-    elif response.status_code == 401:
-        raise Exception("Token is invalid or expired. Please refresh.")
-    else:
-        raise Exception("Failed to fetch data from API")
+            # Handle case when no matches are found
+            if not filtered_matches:
+                return {"message": ErrorCodes.NO_MATCHES_FOUND.description, "status": ErrorCodes.NO_MATCHES_FOUND.value}
+
+            # Process matches based on status code (Scheduled or Live)
+            if match_status_code == 1:
+                return _process_scheduled_matches(filtered_matches, category_type_list, match_formats_list)
+            elif match_status_code == 3:
+                return _process_live_matches(filtered_matches, category_type_list, match_formats_list)
+            else:
+                return {"message": ErrorCodes.INVALID_MATCH_STATUS_CODE.description, "status": ErrorCodes.INVALID_MATCH_STATUS_CODE.value}
+
+        elif response.status_code == 401:
+            return {"message": ErrorCodes.TOKEN_EXPIRED.description, "status": ErrorCodes.TOKEN_EXPIRED.value}
+        else:
+            return {"message": ErrorCodes.API_REQUEST_FAILED.description, "status": response.status_code}
+
+    except Exception as e:
+        return {"message": ErrorCodes.INTERNAL_SERVER_ERROR.description, "status": ErrorCodes.INTERNAL_SERVER_ERROR.value}
+
 
 def _process_scheduled_matches(matches, category_type_list, match_formats_list):
     scheduled_matches = {
-        "status": "success",
+        "status": 200,
         "matches": {
-            "1": [],  # ODI matches will go here
-            "2": [],  # Test matches will go here
-            "3": [],  # T20 matches will go here
+            "1": [],  # ODI matches
+            "2": [],  # Test matches
+            "3": [],  # T20 matches
         }
     }
-
-
-    # Loop through each match only once
     for match in matches:
         category = match.get('competition', {}).get('category', 'Unknown').lower()
         match_format = match.get("format_str", "Unknown")
-
+        
         if category in category_type_list and match_format.lower() in match_formats_list:
             match_data = {
                 "title": match["title"],
@@ -63,8 +70,9 @@ def _process_scheduled_matches(matches, category_type_list, match_formats_list):
                 "date_start": match["date_start"].split(" ")[0],
                 "time_start": match['date_start'].split(" ")[1],
                 "format_str": match_format,
-                "live": match.get("live", False),  
+                "live": match.get("live", False),
                 "result": match["result"],
+                "trades_placed": 100,  # Assume as 100
                 "teama": {
                     "team_id": match["teama"].get("team_id"),
                     "name": match["teama"].get("name"),
@@ -85,28 +93,36 @@ def _process_scheduled_matches(matches, category_type_list, match_formats_list):
                 scheduled_matches["matches"]["2"].append(match_data)
             elif match_format == "T20I":
                 scheduled_matches["matches"]["3"].append(match_data)
-
-        return {"status": "success", "live_matches": scheduled_matches}
     
+    return scheduled_matches
 
 
 def _process_live_matches(matches, category_type_list, match_formats_list):
     live_matches = {
-        "status": "success",
+        "status": 200,
         "matches": {
-            "1": [],  # ODI matches will go here
-            "2": [],  # Test matches will go here
-            "3": [],  # T20 matches will go here
+            "1": [],  # ODI matches
+            "2": [],  # Test matches
+            "3": [],  # T20 matches
         }
     }
 
-
-    # Loop through each match only once
     for match in matches:
         category = match.get('competition', {}).get('category', 'Unknown').lower()
         match_format = match.get("format_str", "Unknown")
+        decision = match.get('toss', {}).get('decision')
+        toss_winner = match.get("toss", {}).get('winner')
+        latest_inning_number = match.get('latest_inning_number')
+        teama = match.get('teama', {})
+        teamb = match.get('teamb', {})
 
-        if category in category_type_list and  match_format.lower() in match_formats_list:
+        score_card = "Match Not Started Yet"
+        if decision == 1:
+            score_card = teama['scores_full'] if latest_inning_number == 1 and teama['team_id'] == toss_winner else teamb['scores_full']
+        elif decision == 2:
+            score_card = teamb['scores_full'] if latest_inning_number == 1 and teama['team_id'] == toss_winner else teama['scores_full']
+
+        if category in category_type_list and match_format.lower() in match_formats_list:
             match_data = {
                 "title": match["title"],
                 "match_id": match["match_id"],
@@ -116,9 +132,10 @@ def _process_live_matches(matches, category_type_list, match_formats_list):
                 "date_start": match["date_start"].split(" ")[0],
                 "time_start": match['date_start'].split(" ")[1],
                 "format_str": match_format,
-                "live": match.get("live", True),  
+                "live": match.get("live", True),
                 "result": match["result"],
-                "trades_placed": 100,  #assume as 100
+                "trades_placed": 100,  # Assume as 100
+                "score_card": score_card,
                 "teama": {
                     "team_id": match["teama"].get("team_id"),
                     "name": match["teama"].get("name"),
@@ -139,7 +156,5 @@ def _process_live_matches(matches, category_type_list, match_formats_list):
                 live_matches["matches"]["2"].append(match_data)
             elif match_format == "T20I":
                 live_matches["matches"]["3"].append(match_data)
-
-                
-    return {"status": "success", "live_matches": live_matches}
-
+    
+    return live_matches
