@@ -15,10 +15,10 @@ def create_app():
     
     # Register blueprints
     from apps.controllers.auth_controller import auth_blurprint, verify_otp_blueprint
-    from apps.controllers.matches_controller import fetch_matches_blueprint
+    # from apps.controllers.matches_controller import fetch_matches_blueprint
     
     app.register_blueprint(auth_blurprint)
-    app.register_blueprint(fetch_matches_blueprint)
+    # app.register_blueprint(fetch_matches_blueprint)
     app.register_blueprint(verify_otp_blueprint)
     
     return app

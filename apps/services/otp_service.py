@@ -1,25 +1,28 @@
-from utils import validate_otp, format_success_response
-from ..repositories.otp_repository import get_active_otp, is_otp_expired, mark_otp_as_verified, increment_failed_attempts, update_otp_status
+from utils import generate_jwt, generate_random_username, validate_otp
+from ..repositories.otp_repository import get_active_otp, is_otp_expired, mark_otp_as_verified, increment_failed_attempts
 from ..repositories.user_repository import get_user_by_mobile, register_new_user
 from config import Config
-from utils import generate_random_username, generate_jwt
 import requests
-import logging
+from datetime import datetime
+from error_codes import ErrorCodes
+import pytz
+
+IST = pytz.timezone('Asia/Kolkata')
 
 def handle_verify_otp(data):
     mobile_number = data.get('mobile_number')
     otp_entered = data.get('otp')
+    extras = data.get('extras')
     
     if not validate_otp(otp_entered):
-        return format_success_response(400, {"error": "Invalid OTP format"}), 400
+        return {"status": ErrorCodes.INVALID_OTP.code, "message": "Invalid OTP"}
+    
     otp_record = get_active_otp(mobile_number)
-
     if otp_record:
         if is_otp_expired(otp_record):
-            update_otp_status(otp_record)
-            return format_success_response(401, {"error": "OTP expired, request a new one"}), 401
-        
-        session_id = otp_record.otp
+            return {"status": ErrorCodes.OTP_EXPIRED.code, "message": "OTP Expired , Request New One."}
+
+        session_id = otp_record.SESSION_ID
         otp_verify_url = f"https://2factor.in/API/V1/{Config.API_2FA}/SMS/VERIFY/{session_id}/{otp_entered}"
 
         try:
@@ -28,30 +31,44 @@ def handle_verify_otp(data):
 
             if otp_verify_data['Status'] == 'Success':
                 mark_otp_as_verified(otp_record)
-
                 user = get_user_by_mobile(mobile_number)
-
                 if not user:
                     username = generate_random_username()
-                    new_user = register_new_user(username=username, mobile_number=mobile_number, is_mobile_verified=1,agreed_to_terms=1)
+                    new_user = register_new_user(username=username, mobile_number=mobile_number, is_mobile_verified=1)
                     user = new_user
+                    token = generate_jwt(
+                        partner_id=1001,
+                        auth_type="signup",
+                        device_id=extras.get('device_fingerprint'),
+                        username=username,
+                        auth_time=datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S'),  
+                        user_id=user.USER_ID, 
+                        mobile_number=user.MOBILE_NUMBER,
+                    )
+                else:
+                    token = generate_jwt(
+                        partner_id=1001,
+                        auth_type="signup",
+                        device_id=extras.get('device_fingerprint'),
+                        username=username,
+                        auth_time=datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S'),  
+                        user_id=user.USER_ID, 
+                        mobile_number=user.MOBILE_NUMBER
+                    )
 
-
-                token = generate_jwt(user.user_id, user.mobile_number)
-                return format_success_response(200, {"success": "OTP verified successfully", "token": token}), 200
-            elif increment_failed_attempts(otp_record):
-                # If OTP entry attempts exceed the limit, prompt the user to request a new OTP
-                update_otp_status(otp_record)
-                return format_success_response(401, {"error": "You've entered the wrong OTP 5 times. Please request a new OTP."}), 401
                 
-            return format_success_response(400, {"error": "Invalid OTP"}), 400
+                return {"status": ErrorCodes.SUCCESS.code, "message": "OTP verified Successfully" , "token": token}
+            elif increment_failed_attempts(otp_record):
+                return {"status": ErrorCodes.OTP_EXPIRED.code, "message": "OTP Expired , Request New One."}
+
+
+
+            return {"status": ErrorCodes.INVALID_OTP.code, "message": "Invalid OTP"}
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"OTP verification request failed: {e}")
-            return format_success_response(500, {"error": "OTP verification service unavailable"}), 500
+            return {"status": ErrorCodes.API_REQUEST_FAILED.code, "message": f"OTP verification request failed: {e}"}
 
         except Exception as e:
-            logging.error(f"Unexpected error during OTP verification: {e}")
-            return format_success_response(500, {"error": "An unexpected error occurred"}), 500
+            return{"status": ErrorCodes.INTERNAL_SERVER_ERROR.code, "message":f"Unexpected error: {e}" }
 
-    return format_success_response(401, {"error": "OTP session not found, Request New one"}), 401
+    return {"status": ErrorCodes.SESSION_NOT_FOUND.code , "message": "OTP session not found"}
